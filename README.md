@@ -8,6 +8,8 @@ for others is planned in the future!
 FoxBoot is licensed under the GNU Public License Version 3 or higher. For more
 information see the COPYING file or visit https://www.gnu.org/licenses/gpl-3.0.en.html
 
+If you have any issues or contributions, feel free to email me at aaron@tixoh.net
+
 ## Quickstart:
 FoxBoot can be built using the
 [gavrasm](http://www.avr-asm-tutorial.net/gavrasm/index_en.html) assembler and

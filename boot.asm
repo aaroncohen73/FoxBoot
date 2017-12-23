@@ -17,8 +17,6 @@
 
 ;; CONSTANT DEFINITIONS
 
-.EQU F_CPU=		16000000	; 16 MHz clock
-
 .EQU BL_INT=		0xFF		; Interrupt byte sent to ATMega during reset sequence
 .EQU BL_PRGM_WRITE=	0x11		; Write program memory command
 .EQU BL_PRGM_READ=	0x22		; Read program memory command
@@ -43,7 +41,8 @@
 .DEF REG4=		R19
 .DEF REG5=		R20
 
-.DEF REG_LOOP=		R23		; Loop counter
+.DEF REG_LOOP1=		R22		; Loop counters
+.DEF REG_LOOP2=		R23
 
 .DEF REG_IO1=		R24		; Temporary registers for writing to I/O registers
 .DEF REG_IO2=		R25
@@ -80,23 +79,23 @@ boot_main:
 	ldi REG_IO1, 25			; Set UART0 baud rate to 19.2 kbps
 	sts UBRR0L, REG_IO1
 
-	ldi REG_LOOP, BL_INT_WAIT	; Initialize loop counter with number of milliseconds to wait
+	ldi REG_LOOP1, BL_INT_WAIT	; Initialize loop counter with number of milliseconds to wait
 
 check_interrupt:
-	rcall sub_wait_1ms		; Delay for 1 millisecond
+	rcall sub_wait			; Delay for 1 millisecond
 
 	lds REG_IO1, UCSR0A		; Check for UART0 RX Complete flag
-	sbrs REG_IO1, RXC0		; If UART0 RX Complete not set, go to next loop iteration
-	rjmp check_interrupt_loop
+	sbrs REG_IO1, RXC0
+	rjmp check_interrupt_next
 
-	lds REG_IO1, UDR0		; Load contents of UART0 data register
-	cpi REG_IO1, BL_INT		; Check for interrupt byte
-	breq boot_start			; If interrupt byte recieved, start the bootloader
+	lds REG_IO1, UDR0		; If interrupt byte received, start the bootloader
+	cpi REG_IO1, BL_INT
+	breq boot_start
 
-check_interrupt_loop:
-	dec REG_LOOP
-	cpi REG_LOOP, 0			; If wait time is up without recieving bootloader interrupt, start main program
-	breq boot_end
+check_interrupt_next:
+	dec REG_LOOP1			; Decrease loop counter
+	cpi REG_LOOP1, 0
+	breq boot_end			; Start main program if no interrupt received
 
 	rjmp check_interrupt		; If wait time is not up yet, go to next loop iteration
 
@@ -138,7 +137,7 @@ prgm_write:
 	ldi XL, LOW(prgm_packet)	; Load address of packet buffer into X register
 	ldi XH, HIGH(prgm_packet)
 
-	ldi REG_LOOP, PAGESIZE		; Initialize loop counter with page size in words
+	ldi REG_LOOP1, PAGESIZE		; Initialize loop counter with page size in words
 
 prgm_write_rx_loop:
 	call sub_uart_rx_single		; Receive MSB of word
@@ -146,8 +145,8 @@ prgm_write_rx_loop:
 	call sub_uart_rx_single		; Receive LSB of word
 	st X+, REG1
 
-	dec REG_LOOP
-	cpi REG_LOOP, 0
+	dec REG_LOOP1			; Decrease loop counter
+	cpi REG_LOOP1, 0
 	brne prgm_write_rx_loop
 
 	;; Check packet CRC
@@ -174,7 +173,7 @@ prgm_write_rx_loop:
 	ldi ZH, 0x00 			; Set up PCWORD with first address inside page buffer (PCWORD=Z[6:1])
 	ldi ZL, 0x00
 
-	ldi REG_LOOP, PAGESIZE		; Initialize loop counter with number of words per page
+	ldi REG_LOOP1, PAGESIZE		; Initialize loop counter with number of words per page
 
 prgm_write_loop:
 	ld REG_SPM1, X+			; Load word into R1:R0
@@ -186,8 +185,8 @@ prgm_write_loop:
 
 	adiw ZH:ZL, 2			; Increment page buffer address
 
-	dec REG_LOOP			; Decrease loop counter
-	cpi REG_LOOP, 0
+	dec REG_LOOP1			; Decrease loop counter
+	cpi REG_LOOP1, 0
 	brne prgm_write_loop
 
 	;; Write page buffer into flash memory
@@ -235,14 +234,14 @@ prgm_read:
 	ldi XL, LOW(prgm_packet)	; Load address of program data buffer into X
 	ldi XH, HIGH(prgm_packet)
 
-	ldi REG_LOOP, PAGESIZEB		; Initialize loop counter with number of bytes to read
+	ldi REG_LOOP1, PAGESIZEB	; Initialize loop counter with number of bytes to read
 
 prgm_read_loop:
 	lpm REG1, Z+			; Load byte of program memory and store into buffer
 	st X+, REG1
 
-	dec REG_LOOP			; Decrease loop counter
-	cpi REG_LOOP, 0
+	dec REG_LOOP1			; Decrease loop counter
+	cpi REG_LOOP1, 0
 	brne prgm_read_loop
 
 	;; Transmit program data read from flash
@@ -258,14 +257,14 @@ prgm_read_loop:
 	ldi XL, LOW(prgm_packet)	; Load address of program data buffer into X
 	ldi XH, HIGH(prgm_packet)
 
-	ldi REG_LOOP, PAGESIZEB		; Initialize loop counter with number of bytes to transmit
+	ldi REG_LOOP1, PAGESIZEB	; Initialize loop counter with number of bytes to transmit
 
 prgm_read_tx_loop:
 	ld REG1, X+			; Transmit single byte of program data
 	rcall sub_uart_tx_single
 
-	dec REG_LOOP			; Decrease loop counter
-	cpi REG_LOOP, 0
+	dec REG_LOOP1			; Decrease loop counter
+	cpi REG_LOOP1, 0
 	brne prgm_read_tx_loop
 
 	;; Transmit CRC of program data
@@ -327,18 +326,99 @@ sub_uart_rx_single:
 	lds REG1, UDR0			; Store received byte
 	ret
 
-;; Calculate the CRC of a packet of data
+;; Calculate the 16 bit CRC of a packet of data (Polynomial 0x8005)
 ;; Pre:  X contains the address of the data buffer to check
 ;;       REG1 contains the size of the data buffer
 ;; Post: REG1:REG2 contains the CRC of the data
 sub_calc_crc:
-	; TODO
+	mov REG_LOOP1, REG1		; Initialize the data (outer) loop and set the remainder
+	ldi REG1, 0			; polynomial (REG1:REG2) to 0
+	ldi REG2, 0
+
+	;; Iterate over data buffer
+
+sub_calc_crc_loop_outer:
+	ldi REG_LOOP2, 8		; Initialize the inner loop
+	ld REG3, X+			; Load the next byte of data
+
+sub_calc_crc_loop_inner:
+	mov REG5, REG1			; Store MSB of remainder to check later
+
+	lsl REG2			; Shift remainder left by 1
+	rol REG1
+
+	ldi REG4, 1			; Grab the next bit of the data byte and logical OR
+	eor REG4, REG3			; it with the LSB of the remainder
+	or REG2, REG4
+
+	ldi REG4, 0x80			; Check bit 15 of the remainder, XOR the remainder with the
+	eor REG5, REG4			; generator polynomial if it's 1
+	cpi REG5, 0
+	breq sub_calc_crc_loop_next
+
+	ldi REG3, 0x80			; XOR the remainder with the generator polynomial
+	eor REG1, REG3
+	ldi REG4, 0x05
+	eor REG2, REG4
+
+sub_calc_crc_loop_next:
+	lsr REG3			; Right shift the data byte to access the next bit
+
+	dec REG_LOOP2			; Decrease inner loop counter
+	cpi REG_LOOP2, 0
+	brne sub_calc_crc_loop_inner
+
+	dec REG_LOOP1			; Decrease outer loop counter
+	cpi REG_LOOP1, 0
+	brne sub_calc_crc_loop_outer
+
+	;; "Push out" last 16 bits of input
+
+	ldi REG_LOOP1, 16
+
+sub_calc_crc_loop_push:
+	mov REG5, REG1			; Store MSB of remainder to check later
+
+	lsl REG2			; Shift remainder left by 1
+	rol REG1
+
+	ldi REG4, 0x80			; Check bit 15 of the remainder, XOR the remainder with the
+	eor REG5, REG4			; generator polynomial if it's 1
+	cpi REG5, 0
+	breq sub_calc_crc_loop_push_next
+
+	ldi REG3, 0x80			; XOR the remainder with the generator polynomial
+	eor REG1, REG3
+	ldi REG4, 0x05
+	eor REG2, REG4
+
+sub_calc_crc_loop_push_next:
+	dec REG_LOOP1			; Decrease loop counter
+	cpi REG_LOOP1, 0
+	brne sub_calc_crc_loop_push
+
+	;; Reverse the bits of the remainder
+
+	ldi REG_LOOP1, 8		; Initialize loop counter and copy remainder to temp registers
+	mov REG3, REG1
+	mov REG4, REG2
+
+sub_calc_crc_loop_reverse:
+	lsl REG3			; The remainder is reversed by shifting bits into the carry register
+	ror REG2			; and then rotating them into REG1:REG2 in reverse order
+	lsr REG4
+	rol REG1
+
+	dec REG_LOOP1
+	cpi REG_LOOP1, 0
+	brne sub_calc_crc_loop_reverse
+
 	ret
 
 ;; Delay for 1 millisecond
 ;; Pre:  N/A
 ;; Post: N/A
-sub_wait_1ms:
+sub_wait:
 	ldi REG_IO1, (1<<CS11)		; Set TIMER1 clock source = I/O clock / 8 (2 MHz)
 	sts TCCR1B, REG_IO1
 
@@ -354,8 +434,8 @@ sub_wait_1ms:
 	ldi REG_IO1, (1<<OCF1A)		; Reset output compare flag
 	out TIFR1, REG_IO1
 
-wait_check:
+sub_wait_loop:
 	sbis TIFR1, OCF1A		; Loop until output compare flag is set
-	rjmp wait_check
+	rjmp sub_wait_loop
 
 	ret

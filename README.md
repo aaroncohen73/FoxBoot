@@ -40,16 +40,92 @@ On reset, FoxBoot waits 20 ms for the interrupt byte (0xFF) to be sent through
 UART0. If this byte is not detected within the timeframe, the main program is
 started and the device must be reset again in order to enter bootloader interactive
 mode. Once interactive mode is entered, FoxBoot will send an ACK byte (0x5A). After
-that, the following commands are possible:
+that, the desired command should be entered. If the command is successfully
+recognized, the ACK byte (0x5A) will be sent. Otherwise, NACK (0xA5) will be sent.
+In interactive mode, the following commands are possible:
 
 #### Write Page (0x11)
-TODO...
+
+TX:
+
+-----------------------------------------------------------------------
+| 0x11 | Page # (1 byte) | Page Data (See below) | Checksum (2 bytes) |
+-----------------------------------------------------------------------
+
+RX:
+
+------------
+| ACK/NACK |
+------------
+
+This command will write a page of program data to flash memory.
+
+The checksum is a 16 bit CRC using the polynomial 0x8005, and is calculated over
+the "Page Data" section of the packet. If the page write was successful,
+ACK will be sent. If the page data doesn't match the checksum, NACK will be sent.
+
+Note: The Write Page command does not erase pages before writing to them. To
+ensure that data is written correclty, call the Erase Page command first.
 
 #### Read Page (0x22)
-TODO...
+
+TX:
+
+--------------------------
+| 0x22 | Page # (1 byte) |
+--------------------------
+
+RX:
+
+----------------------------------------------------
+| Page Data (See below) | Checksum (2 bytes) | ACK |
+----------------------------------------------------
+
+This command will read a page of program data from flash memory.
 
 #### Erase Page (0x44)
-TODO...
+
+TX:
+
+--------------------------
+| 0x44 | Page # (1 byte) |
+--------------------------
+
+RX:
+
+-------
+| ACK |
+-------
+
+This command will erase a page of flash memory.
 
 #### Exit Bootloader (0x88)
-TODO...
+
+TX:
+
+--------
+| 0x88 |
+--------
+
+RX:
+
+-------
+| ACK |
+-------
+
+This command will exit the bootloader and start the main program at flash
+address 0x0000
+
+## Device Page Size Table
+
+--------------------------------------
+| Device     | Page Size             |
+--------------------------------------
+| ATmega328p | 64 words (128 bytes)  |
+--------------------------------------
+
+## TODO
+
+- Clean up documentation/Write a proper specification that can be implemented
+- Add CRC check of flash at end of Write Page
+- Add support for more devices

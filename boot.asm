@@ -35,6 +35,10 @@
 .DEF REG_SPM1=		R0		; Registers for writing/reading from page buffer during
 .DEF REG_SPM2=		R1		; SPM instructions
 
+.DEF REG_HOLD1=		R2		; Registers that are guarenteed to not change as a result
+.DEF REG_HOLD2=		R3		; of subroutine side effects
+.DEF REG_HOLD3=		R4
+
 .DEF REG1=		R16		; General purpose registers for things like passing
 .DEF REG2=		R17		; values to/from subroutines and performing quick
 .DEF REG3=		R18		; arithmetic computations
@@ -115,12 +119,16 @@ boot_loop:
 	brne +2
 	rjmp prgm_erase
 	cpi REG1, BL_EXIT		; Exit bootloader and start main program command
-	breq boot_end
+	breq boot_end_ack
 
 	ldi REG1, BL_NACK		; If command not recognized, NACK and go to beginning of loop
 	rcall sub_uart_tx_single
 
 	rjmp boot_loop
+
+boot_end_ack:
+	ldi REG1, BL_ACK		; Respond to bootloader exit command with ACK
+	call sub_uart_tx_single
 
 boot_end:
 	ldi REG_IO1, 0xFF		; Put all peripherals into power saving mode and start main program
@@ -130,9 +138,10 @@ boot_end:
 ;; Write a page of program data to flash
 prgm_write:
 	ldi REG1, BL_ACK		; Respond to command with ACK
+	call sub_uart_tx_single
 
 	call sub_uart_rx_single		; Receive page number of flash to write
-	mov REG5, REG1
+	mov REG_HOLD3, REG1
 
 	ldi XL, LOW(prgm_packet)	; Load address of packet buffer into X register
 	ldi XH, HIGH(prgm_packet)
@@ -151,18 +160,18 @@ prgm_write_rx_loop:
 
 	;; Check packet CRC
 
-	call sub_uart_rx_single		; Receive MSB of packet CRC
-	mov REG3, REG1
-	call sub_uart_rx_single		; Receive LSB of packet CRC
-	mov REG4, REG1
+	call sub_uart_rx_single		; Receive MSB of checksum
+	mov REG_HOLD1, REG1
+	call sub_uart_rx_single		; Receive LSB of checksum
+	mov REG_HOLD2, REG1
 
-	ldi XH, HIGH(prgm_packet)	; Calculate CRC of packet minus received CRC
-	ldi XL, LOW(prgm_packet)
+	ldi XH, HIGH(prgm_packet+1)	; Calculate checksum of page data
+	ldi XL, LOW(prgm_packet+1)
 	ldi REG1, PAGESIZEB
 	rcall sub_calc_crc
 
-	cpc REG1, REG3			; Check calculated CRC against received CRC, error if not equal
-	cpc REG2, REG4
+	cpc REG1, REG_HOLD1		; Check calculated CRC against received CRC, error if not equal
+	cpc REG2, REG_HOLD2
 	brne prgm_write_error
 
 	;; Write data into page buffer
@@ -191,7 +200,7 @@ prgm_write_loop:
 
 	;; Write page buffer into flash memory
 
-	mov REG1, REG5			; Get the address of the page to write
+	mov REG1, REG_HOLD3		; Get the address of the page to write
 	mov REG2, REG1			; (and copy to second register)
 
 	lsr REG1			; Set up upper 7 bits of page address (PCPAGE[7:1]=ZH[6:0])

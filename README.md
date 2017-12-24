@@ -127,5 +127,4 @@ address 0x0000
 ## TODO
 
 - Clean up documentation/Write a proper specification that can be implemented
-- Add CRC check of flash at end of Write Page
 - Add support for more devices

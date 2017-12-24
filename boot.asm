@@ -214,31 +214,61 @@ prgm_write_loop:
 	out SPMCSR, REG_IO1
 	spm
 
+	mov ZH, REG_HOLD3		; Set up upper 7 bits of page address (PCPAGE[7:1]=ZH[6:0])
+	lsr ZH
+
+	mov ZL, REG_HOLD3		; Set up lower 1 bit of page address (PCPAGE[0]=ZL[7])
+	ror ZL
+	ror ZL
+	andi ZL, 0x80
+
+	ldi XL, LOW(prgm_packet)	; Load address of program data buffer into X
+	ldi XH, HIGH(prgm_packet)
+
+	ldi REG_LOOP1, PAGESIZEB	; Initialize loop counter with number of bytes to read
+
+prgm_write_loop_verify:
+	lpm REG1, Z+			; Load byte of program memory and store into buffer
+	st X+, REG1
+
+	dec REG_LOOP1			; Decrease loop counter
+	cpi REG_LOOP1, 0
+	brne prgm_write_loop_verify
+
+	ldi XH, HIGH(prgm_packet)	; Calculate CRC of flash program data
+	ldi XL, LOW(prgm_packet)
+	ldi REG1, PAGESIZEB
+	rcall sub_calc_crc
+
+	cpc REG1, REG_HOLD1		; Check calculated CRC against received CRC, error if not equal
+	cpc REG2, REG_HOLD2
+	brne prgm_write_error
+
 	ldi REG1, BL_ACK		; Send ACK and exit write mode
 	rcall sub_uart_tx_single
-	rjmp prgm_write_loop_end
+	rjmp prgm_write_end
 
 prgm_write_error:
 	ldi REG1, BL_NACK		; Send NACK on error
 	rcall sub_uart_tx_single
 
-prgm_write_loop_end:
+prgm_write_end:
 	rjmp boot_loop
 
 ;; Read a page of program data from flash
 prgm_read:
-	ldi REG1, BL_ACK		; Resond to command with ACK and start read mode
+	ldi REG1, BL_ACK		; Respond to command with ACK and start read mode
 	rcall sub_uart_tx_single
 
 	rcall sub_uart_rx_single	; Get the address of the page to read
-	mov REG2, REG1			; (and copy to second register)
 
-	lsr REG1			; Set up upper 7 bits of page address (PCPAGE[7:1]=ZH[6:0])
-	mov ZH, REG1
+	mov ZH, REG1			; Set up upper 7 bits of page address (PCPAGE[7:1]=ZH[6:0])
+	lsr ZH
 
-	ror REG2			; Set up lower 1 bit of page address (PCPAGE[0]=ZL[7])
-	andi REG2, 0x80
-	mov ZL, REG2
+	mov ZL, REG1			; Set up lower 1 bit of page address (PCPAGE[0]=ZL[7])
+	ror ZL
+	ror ZL
+	andi ZL, 0x80
 
 	ldi XL, LOW(prgm_packet)	; Load address of program data buffer into X
 	ldi XH, HIGH(prgm_packet)
@@ -295,14 +325,14 @@ prgm_erase:
 	rcall sub_uart_tx_single
 
 	rcall sub_uart_rx_single	; Get the address of the page to erase
-	mov REG2, REG1			; (and copy to second register)
 
-	lsr REG1			; Set up upper 7 bits of page address (PCPAGE[7:1]=ZH[6:0])
-	mov ZH, REG1
+	mov ZH, REG1			; Set up upper 7 bits of page address (PCPAGE[7:1]=ZH[6:0])
+	lsr ZH
 
-	ror REG2			; Set up lower 1 bit of page address (PCPAGE[0]=ZL[7])
-	andi REG2, 0x80
-	mov ZL, REG2
+	mov ZL, REG1			; Set up lower 1 bit of page address (PCPAGE[0]=ZL[7])
+	ror ZL
+	ror ZL
+	andi ZL, 0x80
 
 	ldi REG_IO1, (1<<PGERS)|(1<<SPMEN)	; Perform page erase
 	out SPMCSR, REG_IO1
@@ -383,7 +413,7 @@ sub_calc_crc_loop_next:
 
 	;; "Push out" last 16 bits of input
 
-	ldi REG_LOOP1, 16
+	ldi REG_LOOP1, 16		; Initialize loop
 
 sub_calc_crc_loop_push:
 	mov REG5, REG1			; Store MSB of remainder to check later
